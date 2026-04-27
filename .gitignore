@@ -142,3 +142,7 @@ scripts/internal/
 
 # Per-oracle pickle snapshots for multi-oracle consolidator (regenerate on demand)
 examples/walkthroughs/validation/SORT1_rs12740374_multioracle/*.pkl
+
+# Local Nix dev shell state
+.direnv/
+.mamba/
