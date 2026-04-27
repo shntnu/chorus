@@ -65,6 +65,64 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   "Device: auto-detect"; I never watched `nvidia-smi` during the
   run. Confirm next time with `nvidia-smi dmon`.
 
+## 2026-04-27 - GPU verification: was NOT engaged; libcuda.so path fix
+
+- Did the verification check that the previous entry kicked down the
+  road. Inside chorus-alphagenome: `jax.devices()` returned
+  `[CpuDevice(id=0)]` with `cuInit(0) failed: error 303 ... unable to
+  load CUDA libraries`. JAX silently fell back to CPU. So the earlier
+  "AlphaGenome would be CPU-only ... was unfounded" sentence was
+  itself wrong - it WAS CPU-only on Oppy, just for a different reason
+  than I was worried about. `jax[cuda12]` was installed correctly;
+  the runtime couldn't dlopen `libcuda.so`. "Device: auto-detect" in
+  chorus logs is the chorus base process talking, not the per-oracle
+  subprocess - unreliable.
+- Cross-check on chorus-enformer (TF): same fault, different error
+  ("Cannot dlopen some GPU libraries", plural). Systemic, not
+  AlphaGenome-specific.
+- Root cause: on NixOS, `libcuda.so` lives at
+  `/run/opengl-driver/lib/libcuda.so` (symlink → nix-store
+  `nvidia-dc-565.57.01` derivation). chorus's flake.nix `libList →
+  LD_LIBRARY_PATH` did not include that path, so pip-installed CUDA
+  wheels couldn't find it.
+- Fix: one-line shellHook addition mirroring the validated pattern
+  from `shntnu-neusis/templates/python-pixi/flake.nix:31`
+  (Linux-guarded so the same flake works on Mac):
+  `[ -d /run/opengl-driver/lib ] && export LD_LIBRARY_PATH=/run/opengl-driver/lib:$LD_LIBRARY_PATH`.
+  Note from upstream of that template (MAINTENANCE_LOG line 760):
+  "Validated pixi for GPU/RAPIDS workflows without FHS wrapper
+  complexity" - the LD path is enough; no buildFHSEnv / nix-ld
+  acrobatics needed for CUDA specifically. The path is set on the
+  dev shell and inherited by anything spawned inside (micromamba,
+  pixi, plain pip).
+- Verified after fix, inside chorus-alphagenome env (with my
+  LD_LIBRARY_PATH override matching the new flake):
+  - `jax.devices()` → `[CudaDevice(id=0..3)]`, default backend=gpu.
+  - 4Kx4K matmul: **66x speedup** (0.54 ms/call on GPU vs 35.56
+    ms/call on CPU).
+  - chorus's per-oracle subprocess inherits the path correctly
+    (verified by running an introspection script through
+    `oracle._env_runner.run_script_in_environment`); jax inside the
+    subprocess also sees all 4 GPUs.
+- Surprise: AlphaGenome's chorus-level prediction timing didn't
+  improve (~64 s/call, same as CPU). Cause: `predict_template.py:48`
+  calls `create_from_huggingface(fold, device=jax_device)` inside
+  every subprocess, so each `oracle.predict(...)` does a full
+  model-load + JAX/XLA compile + inference. The ~64 s is dominated
+  by the load+compile (~50 s); actual GPU inference is the small
+  remainder. Two back-to-back `oracle.predict()` calls both took
+  64.4 s and 64.3 s - 1.0× speedup, not because GPU isn't working
+  but because the compile cache doesn't survive subprocess death.
+  This is a chorus architectural property (per-call subprocess
+  isolation across oracle envs), not a fix bug. Real cohort work
+  will need either chorus's batch interface (if any) or dropping
+  down to AlphaGenome's API directly.
+- Enformer (chorus-enformer): error after the fix changed from "DSO
+  not loaded" to "Cannot dlopen some GPU libraries (plural)". TF
+  2.13.1 predates the bundled-CUDA-wheels era (TF 2.15+ ships them);
+  it needs cudatoolkit/cudnn/cublas installed externally. Not fixed
+  by the LD_LIBRARY_PATH change. Out of scope for now.
+
 ## Open threads
 
 - First real query: PIGN expression across chorus's CAGE / RNA-seq
@@ -77,5 +135,14 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   1 MB context that's too dilute. Check what local-window aggregation
   chorus exposes (likely on `OraclePrediction` or a helper) before
   scoring real PIGN variants.
-- `nvidia-smi dmon` during AlphaGenome inference to confirm GPU
-  utilization (currently inferred from timing only).
+- chorus per-prediction subprocess overhead (~60 s/call) hides GPU
+  speedup for single calls because the model + XLA compile don't
+  survive between subprocess invocations. For PIGN cohort scoring,
+  check whether chorus has a batch / persistent-session mode, or if
+  we'd need to drop down to alphagenome's API directly to amortize
+  the compile.
+- Enformer GPU: chorus-enformer pins TF 2.13.1, which predates the
+  bundled-CUDA-wheels era. Either install cudatoolkit+cudnn into the
+  env, or bump chorus-enformer.yml to TF 2.15+. Probably not worth
+  chasing unless we actually need Enformer for the PIGN work -
+  AlphaGenome supersedes it for our use case.

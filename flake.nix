@@ -46,6 +46,11 @@
           NIX_LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libList;
 
           shellHook = ''
+            # NVIDIA driver libs (libcuda.so) live here on NixOS — pip-installed
+            # CUDA wheels (jax[cuda12], tensorflow) need this path. Pattern from
+            # shntnu-neusis/templates/python-pixi/flake.nix:31.
+            [ -d /run/opengl-driver/lib ] && \
+              export LD_LIBRARY_PATH=/run/opengl-driver/lib:$LD_LIBRARY_PATH
             export LD_LIBRARY_PATH=$NIX_LD_LIBRARY_PATH:$LD_LIBRARY_PATH
 
             # Keep mamba state inside the repo so it doesn't pollute $HOME.
