@@ -123,6 +123,47 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   it needs cudatoolkit/cudnn/cublas installed externally. Not fixed
   by the LD_LIBRARY_PATH change. Out of scope for now.
 
+## 2026-04-27 - Enformer GPU: thread closed, was a misdiagnosis
+
+- Re-checked the parked "Enformer GPU broken" claim from the
+  19:34 entry. It's wrong - the GPU path actually works.
+- The CUDA-11 wheels are already in `environments/chorus-enformer.yml:42-49`
+  (`nvidia-cublas-cu11`, `nvidia-cudnn-cu11>=8.6,<9.0`, `cuda_runtime`,
+  `cufft`, `curand`, `cusolver`, `cusparse`). No external cudatoolkit
+  install needed.
+- `chorus.core.environment.runner._prepare_env` (runner.py:97-112)
+  already stitches `nvidia/*/lib` onto `LD_LIBRARY_PATH` for any TF
+  env. The comment in that code is exactly "TF <2.15 not auto-discovering
+  nvidia-* pip packages".
+- TF 2.13.1 inside chorus-enformer, when invoked through the
+  EnvironmentRunner harness: `Built with CUDA: True`, four
+  `PhysicalDevice('/physical_device:GPU:N')` visible.
+- `just demo` runs end-to-end on GPU: WT mean DNase = 0.469 (matches
+  the Mac CPU smoke 0.468 within rounding). nvidia-smi shows GPU 0
+  jumping to 93 GB allocated (TF default greedy alloc). Wall clock
+  ~13 s including model load.
+- Where the 19:34 misdiagnosis came from: same pattern as the
+  AlphaGenome libcuda issue - the test was run *outside* the
+  EnvironmentRunner harness (raw `mamba run -n chorus-enformer python
+  -c ...`), which doesn't add the pip-installed nvidia libs to
+  `LD_LIBRARY_PATH`. So both error messages ("DSO not loaded",
+  "Cannot dlopen some GPU libraries") said "drivers missing" for
+  the same wrong reason.
+- One real but minor caveat: TF 2.13.1 logs `TensorFlow was not built
+  with CUDA kernel binaries compatible with compute capability 9.0.
+  CUDA kernels will be jit-compiled from PTX, which could take 30
+  minutes or longer.` H100 is sm_90 (Hopper); TF 2.13's bundled
+  kernels stop at sm_86. Practically, demo completed in seconds -
+  PTX JIT happens but is fast for Enformer's kernel set. Worth
+  remembering for fresh-process workloads, where the JIT cost is
+  paid once per subprocess (and dies with it, same problem as
+  AlphaGenome's compile cache).
+- Lesson for future verification: any "GPU broken" claim in this
+  repo needs to be reproduced *through* the EnvironmentRunner
+  (`oracle.predict(...)` or a `just demo`-style harness call), not
+  by a raw `mamba run`, because the runner does non-trivial env-prep
+  that's invisible from a shell.
+
 ## Open threads
 
 - First real query: PIGN expression across chorus's CAGE / RNA-seq
@@ -135,14 +176,9 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   1 MB context that's too dilute. Check what local-window aggregation
   chorus exposes (likely on `OraclePrediction` or a helper) before
   scoring real PIGN variants.
-- chorus per-prediction subprocess overhead (~60 s/call) hides GPU
-  speedup for single calls because the model + XLA compile don't
-  survive between subprocess invocations. For PIGN cohort scoring,
-  check whether chorus has a batch / persistent-session mode, or if
-  we'd need to drop down to alphagenome's API directly to amortize
-  the compile.
-- Enformer GPU: chorus-enformer pins TF 2.13.1, which predates the
-  bundled-CUDA-wheels era. Either install cudatoolkit+cudnn into the
-  env, or bump chorus-enformer.yml to TF 2.15+. Probably not worth
-  chasing unless we actually need Enformer for the PIGN work -
-  AlphaGenome supersedes it for our use case.
+- chorus per-prediction subprocess overhead (~60 s/call AlphaGenome,
+  smaller for Enformer) hides GPU speedup for single calls because
+  the model + XLA/PTX-JIT compile don't survive between subprocess
+  invocations. For PIGN cohort scoring, check whether chorus has a
+  batch / persistent-session mode, or if we'd need to drop down to
+  alphagenome's API directly to amortize the compile.
