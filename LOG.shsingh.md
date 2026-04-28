@@ -141,7 +141,10 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
 - `just demo` runs end-to-end on GPU: WT mean DNase = 0.469 (matches
   the Mac CPU smoke 0.468 within rounding). nvidia-smi shows GPU 0
   jumping to 93 GB allocated (TF default greedy alloc). Wall clock
-  ~13 s including model load.
+  is ~70 s end-to-end (re-verified 2026-04-27 evening): ~13 s for
+  load + first predict, the rest dominated by `predict_variant_effect`
+  spawning a fresh subprocess per alt allele. Earlier "~13 s" claim
+  in this entry was timing only load + WT predict, not the full demo.
 - Where the 19:34 misdiagnosis came from: same pattern as the
   AlphaGenome libcuda issue - the test was run *outside* the
   EnvironmentRunner harness (raw `mamba run -n chorus-enformer python
@@ -164,6 +167,122 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   by a raw `mamba run`, because the runner does non-trivial env-prep
   that's invisible from a shell.
 
+## 2026-04-27 — Why this fork exists, in plain language
+
+Stepping back from the day's plumbing to write down, in one place, what
+this exploration is for. Audience: someone in a PIGN-CDG family who
+isn't a computational biologist and wants to know what I'm actually
+doing on this side of the project.
+
+### The bigger picture: pign-cdg
+
+PIGN-CDG (also called MCAHS1) is a rare genetic condition. The PIGN
+gene is one piece of an "anchor factory" inside every cell — a
+~27-step assembly line that builds tiny molecular tethers (called GPI
+anchors) which hold over 150 different proteins on the outside of the
+cell, where they do their jobs. When PIGN doesn't work, those
+proteins can't get tethered properly, and the downstream effects
+touch many systems at once: the brain (seizures, developmental
+delay), muscles (low tone), and others.
+
+NS, my niece, was diagnosed with PIGN-CDG in 2024. She inherited
+two different broken copies of PIGN — one from each parent. About
+140 other families worldwide are known to be affected. The pign-cdg
+project at the Broad Institute is the umbrella for the work my lab
+and collaborators are doing to help; it has three main strands:
+
+1. **Drug repurposing.** Perlara screened ~1,760 already-approved
+   drugs and supplements against a "yeast avatar" of PIGN — yeast
+   engineered to carry the human disease. Three rescued the yeast:
+   ascorbyl palmitate (a vitamin C derivative), voriconazole (an
+   antifungal), and ziprasidone (an antipsychotic). Some children,
+   including NS for a stretch, have tried ascorbyl palmitate;
+   results across families have been mixed.
+
+2. **Variant characterization.** Different families carry different
+   mutations in PIGN. We need to know, for each one: how broken is
+   that specific version? My colleague RS has been imaging cells
+   that carry 108 different PIGN mutations — including NS's — to
+   see how each one disrupts the cell. That work is the spine of
+   the paper we're planning.
+
+3. **This exploration: the DNA-regulation angle.** What this fork
+   is about. See below.
+
+The pign-cdg repo (`../pign-cdg`) is where the main analyses, the
+patient brief, the collaborator map, and the paper plan all live.
+That is the canonical place; this fork is a side-experiment.
+
+### What I'm doing here, and what "chorus" / "LP" means
+
+**LP** runs a computational biology lab at MGH / Harvard.
+His group released **chorus** — an open-source software toolkit that
+bundles together six different deep-learning models trained to
+*read DNA*. Each model takes a stretch of DNA as input and predicts
+what that DNA does in different cell types — for example, "this
+piece of DNA acts as an on-switch for gene X in liver cells but is
+silent in neurons." The six models in chorus (Enformer, AlphaGenome,
+Borzoi, ChromBPNet, Sei, LegNet) were each built by different
+research groups and trained on different data, so they're
+complementary lenses on the same question: *what does this stretch
+of DNA do?*
+
+The first two strands of pign-cdg work are about the **protein**:
+how broken is the PIGN protein when a particular mutation is in
+place, and what drug might help. Chorus is about the **DNA around
+the protein** — the regulatory regions that decide where, when,
+and how strongly PIGN gets turned on. Two specific questions it
+could help with:
+
+- **Where is PIGN normally active?** Chorus can predict, across
+  thousands of cell types, where PIGN is most expressed. If those
+  predictions line up with the tissues most affected in MCAHS1
+  (brain, muscle), it tells us we're using cell models that resemble
+  the real disease tissue — useful for choosing the right cells in
+  follow-up experiments.
+
+- **Are there non-coding mutations we're missing?** Almost all known
+  pathogenic PIGN mutations sit inside the protein-coding region.
+  But for some of the ~140 families, no clear cause has been found
+  in the coding region. Mutations in the regulatory DNA *around*
+  PIGN — promoters, enhancers, splice sites — could explain some of
+  those. Chorus is one of the only practical tools for scoring that
+  class of mutation, and existing methods used elsewhere on this
+  project (imaging, yeast functional assays, protein-folding
+  predictors) don't cover it.
+
+### Scope and limits
+
+NS's two mutations are both in the coding part of PIGN. Chorus
+predicts effects on regulatory DNA around a gene, not on protein
+function, so it will not speak to her variants directly — RS's
+imaging and structural / protein-folding analyses are the tools
+for those. What chorus covers that the other strands do not:
+
+- Tissue-of-interest selection: predicting where PIGN is most
+  active across cell types, as a second lens alongside the
+  imaging work.
+- Non-coding mutations in the broader cohort: regulatory-region
+  variants are not addressed by the imaging, yeast, or
+  protein-folding tools currently in use.
+- Cross-modality interpretation: combining imaging (RS),
+  functional (yeast / VISTA), and regulatory (chorus) signals on
+  a single variant.
+
+Expected output: a supplementary section in the paper and any
+leads from the cohort scan. The exploration takes a few weeks on
+a server already in place.
+
+### Where things stand today
+
+Setup: the tool runs end-to-end on a 4-GPU server. NVIDIA driver
+path issues on NixOS were resolved earlier today (see the prior
+entries). The first scientific query — predicting PIGN's expression
+landscape across cell types — is the next thing.
+
+I have done **zero PIGN-specific analysis with chorus yet**. Today
+was infrastructure. The biology starts tomorrow.
+
 ## Open threads
 
 - First real query: PIGN expression across chorus's CAGE / RNA-seq
@@ -176,9 +295,13 @@ findings to `../pign-cdg/docs/log.md` with a link back here.
   1 MB context that's too dilute. Check what local-window aggregation
   chorus exposes (likely on `OraclePrediction` or a helper) before
   scoring real PIGN variants.
-- chorus per-prediction subprocess overhead (~60 s/call AlphaGenome,
-  smaller for Enformer) hides GPU speedup for single calls because
-  the model + XLA/PTX-JIT compile don't survive between subprocess
-  invocations. For PIGN cohort scoring, check whether chorus has a
-  batch / persistent-session mode, or if we'd need to drop down to
-  alphagenome's API directly to amortize the compile.
+- chorus per-prediction subprocess overhead hides GPU speedup for
+  single calls because the model + XLA/PTX-JIT compile don't survive
+  between subprocess invocations. This is *all* oracles, not just
+  AlphaGenome — confirmed by re-verification: `just demo` (Enformer,
+  WT predict + 3-allele variant scan) takes ~70 s end-to-end on GPU
+  because each alt allele re-pays the load cost. AlphaGenome is just
+  the worst case (~60 s/call vs Enformer's ~13 s/call) because its
+  model is bigger. For PIGN cohort scoring, check whether chorus has
+  a batch / persistent-session mode, or if we'd need to drop down to
+  the underlying oracle APIs directly to amortize the compile.
