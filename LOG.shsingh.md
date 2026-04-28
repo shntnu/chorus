@@ -201,10 +201,11 @@ and collaborators are doing to help; it has three main strands:
 
 2. **Variant characterization.** Different families carry different
    mutations in PIGN. We need to know, for each one: how broken is
-   that specific version? My colleague RS has been imaging cells
-   that carry 108 different PIGN mutations — including NS's — to
-   see how each one disrupts the cell. That work is the spine of
-   the paper we're planning.
+   that specific version? My colleague RS has been analyzing images
+   of cells in which 108 different PIGN variants — including NS's —
+   have been overexpressed, characterizing how each variant alters
+   cell appearance and protein localization. That work is the spine
+   of the paper we're planning.
 
 3. **This exploration: the DNA-regulation angle.** What this fork
    is about. See below.
