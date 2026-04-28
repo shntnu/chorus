@@ -230,10 +230,12 @@ of DNA do?*
 
 The first two strands of pign-cdg work are about the **protein**:
 how broken is the PIGN protein when a particular mutation is in
-place, and what drug might help. Chorus is about the **DNA around
-the protein** — the regulatory regions that decide where, when,
-and how strongly PIGN gets turned on. Two specific questions it
-could help with:
+place, and what drug might help. Chorus operates one level upstream
+of that — given a stretch of DNA (anywhere in or around a gene), it
+predicts molecular readouts that don't depend on knowing the protein
+structure: how much of the gene is transcribed, where the chromatin
+is open, where transcription factors bind, where splicing occurs.
+Two specific questions it could help with:
 
 - **Where is PIGN normally active?** Chorus can predict, across
   thousands of cell types, where PIGN is most expressed. If those
@@ -254,11 +256,17 @@ could help with:
 
 ### Scope and limits
 
-NS's two mutations are both in the coding part of PIGN. Chorus
-predicts effects on regulatory DNA around a gene, not on protein
-function, so it will not speak to her variants directly — RS's
-imaging and structural / protein-folding analyses are the tools
-for those. What chorus covers that the other strands do not:
+NS's two mutations are coding (a missense and a multi-exon deletion).
+Chorus predicts gene-regulatory and splicing readouts from sequence —
+not the protein-biochemistry effects of an amino-acid change (folding,
+binding, enzyme activity). The central question for her variants —
+does Arg95Gln disrupt PIGN's enzymatic role in GPI-anchor synthesis?
+— sits in the protein-structural / variant-effect space (AlphaFold,
+ESM, RS's image-based profiling). Chorus could still score these
+variants for a secondary effect — e.g., does Arg95Gln happen to
+disrupt a splice site or local expression — but that's a side check,
+not the primary lens. What chorus covers that the other strands do
+not:
 
 - Tissue-of-interest selection: predicting where PIGN is most
   active across cell types, as a second lens alongside the
